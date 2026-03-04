@@ -5,58 +5,29 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
 
   try {
-    const token = process.env.GITHUB_TOKEN;
-    const owner = process.env.GITHUB_OWNER;
-    const repo = process.env.GITHUB_REPO;
-
-    if (!token || !owner || !repo) {
-      return new NextResponse('Server configuration missing', { status: 500 });
+    if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_OWNER || !process.env.GITHUB_REPO) {
+       return new Response('Server configuration missing', { status: 500 });
     }
 
-    const octokit = new Octokit({ auth: token });
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
-    // Get artifact download URL (Fix 2)
-    // Instead of downloading to memory, we get the redirect URL
-    const response = await octokit.rest.actions.downloadArtifact({
-      owner,
-      repo,
+    const artifact = await octokit.rest.actions.downloadArtifact({
+      owner: process.env.GITHUB_OWNER,
+      repo: process.env.GITHUB_REPO,
       artifact_id: parseInt(id),
-      archive_format: 'zip',
-      request: {
-        redirect: 'manual' // Don't follow redirect automatically
+      archive_format: 'zip'
+    });
+
+    // Return the download URL or stream
+    return new Response(artifact.data as ArrayBuffer, {
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="app.zip"'
       }
     });
 
-    // If GitHub redirects (which it usually does for artifacts), use that URL
-    const downloadUrl = response.headers.location;
-
-    if (downloadUrl) {
-        // Stream from the redirect URL
-        const artifactResponse = await fetch(downloadUrl);
-        
-        if (!artifactResponse.ok || !artifactResponse.body) {
-            throw new Error('Failed to fetch artifact stream');
-        }
-
-        return new NextResponse(artifactResponse.body, {
-            headers: {
-                'Content-Type': 'application/zip',
-                'Content-Disposition': `attachment; filename="app-release.zip"`,
-            },
-        });
-    } else {
-        // Fallback for small artifacts if no redirect (unlikely for artifacts)
-        const buffer = response.data as ArrayBuffer;
-        return new NextResponse(buffer, {
-            headers: {
-                'Content-Type': 'application/zip',
-                'Content-Disposition': `attachment; filename="app-release.zip"`,
-            },
-        });
-    }
-
   } catch (error: any) {
-    console.error('Download Error:', error);
-    return new NextResponse(error.message || 'Failed to download artifact', { status: 500 });
+    console.error('Download API Error:', error);
+    return new Response(error.message || 'Internal Server Error', { status: 500 });
   }
 }

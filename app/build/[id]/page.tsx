@@ -1,219 +1,179 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
-import { 
-  Download, 
-  Terminal, 
-  CheckCircle2, 
-  AlertCircle, 
-  Loader2, 
-  ArrowLeft, 
-  Copy, 
-  Clock, 
-  FileCode 
-} from 'lucide-react';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
+import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import { formatDuration, cn } from '@/lib/utils';
-import { Build } from '@/types';
+import { Button } from '@/components/ui/button';
+import { CheckCircle2, XCircle, Clock, Download, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+
+type BuildStatus = {
+  status: string;
+  conclusion: string | null;
+  currentStep: string;
+  progress: number;
+  duration: string;
+  downloadUrl: string | null;
+  apkSize: number | null;
+  errorMessage: string | null;
+};
 
 export default function BuildStatusPage() {
-  const { id } = useParams();
-  const router = useRouter();
-  const [build, setBuild] = useState<Build | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [progress, setProgress] = useState(0);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const params = useParams();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const [buildStatus, setBuildStatus] = useState<BuildStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [logsOpen, setLogsOpen] = useState(false);
 
-  // Poll for build status
   useEffect(() => {
     if (!id) return;
 
     const fetchStatus = async () => {
       try {
-        const response = await fetch(`/api/status/${id}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-             // If API returns 404, try to load from local storage as fallback
-             const storedBuilds = JSON.parse(localStorage.getItem('builds') || '[]');
-             const localBuild = storedBuilds.find((b: Build) => b.id === id);
-             if (localBuild) {
-               setBuild(localBuild);
-               setLogs(['Waiting for server updates...']);
-             } else {
-               toast.error('Build not found');
-               router.push('/history');
-             }
-             return;
-          }
-          throw new Error('Failed to fetch status');
-        }
-        
-        const data = await response.json();
-        setBuild(data.build);
-        setLogs(data.logs || []);
-        setProgress(data.progress || 0);
-
-        // Update local storage
-        const storedBuilds = JSON.parse(localStorage.getItem('builds') || '[]');
-        const updatedBuilds = storedBuilds.map((b: Build) => 
-          b.id === id ? { ...b, ...data.build } : b
-        );
-        localStorage.setItem('builds', JSON.stringify(updatedBuilds));
-
-        if (data.build.status === 'success' || data.build.status === 'failed') {
-          return true; // Stop polling
-        }
+        const res = await fetch(`/api/status/${id}`);
+        const data = await res.json();
+        setBuildStatus(data);
+        setLoading(false);
       } catch (error) {
-        console.error('Polling error:', error);
+        console.error('Error fetching status:', error);
       }
-      return false;
     };
 
-    // Initial fetch
     fetchStatus();
-
-    const interval = setInterval(async () => {
-      const shouldStop = await fetchStatus();
-      if (shouldStop) clearInterval(interval);
-    }, 3000);
-
+    const interval = setInterval(fetchStatus, 5000); // Auto-refresh every 5 seconds
     return () => clearInterval(interval);
-  }, [id, router]);
+  }, [id]);
 
-  // Auto-scroll logs
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [logs]);
-
-  const copyLogs = () => {
-    navigator.clipboard.writeText(logs.join('\n'));
-    toast.success('Logs copied to clipboard');
-  };
-
-  if (!build) {
+  if (loading && !buildStatus) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
+      <div className="container mx-auto py-8 text-center flex flex-col items-center justify-center min-h-[50vh]">
+        <Clock className="h-12 w-12 animate-pulse text-slate-400 mb-4" />
+        <p className="text-lg text-slate-400">Loading build status...</p>
       </div>
     );
   }
 
+  if (!buildStatus) return <div className="container mx-auto py-8 text-center">Build not found</div>;
+
+  const isSuccess = buildStatus.status === 'completed' && buildStatus.conclusion === 'success';
+  const isFailed = buildStatus.status === 'completed' && buildStatus.conclusion === 'failure';
+  const isInProgress = buildStatus.status === 'in_progress' || buildStatus.status === 'queued';
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            Build #{build.id.slice(0, 8)}
-            <Badge 
-              variant={
-                build.status === 'success' ? 'success' : 
-                build.status === 'failed' ? 'destructive' : 
-                'secondary'
-              }
-              className="ml-2"
-            >
-              {build.status.toUpperCase()}
-            </Badge>
-          </h1>
-          <p className="text-slate-400 flex items-center gap-2 text-sm">
-            <Clock className="h-3 w-3" /> Started {new Date(build.date).toLocaleString()}
-          </p>
-        </div>
-        <div className="ml-auto flex gap-2">
-          {build.status === 'success' && (
-            <a href={`/api/download/${id}`} download>
-              <Button className="bg-green-600 hover:bg-green-700">
-                <Download className="mr-2 h-4 w-4" /> Download APK
-              </Button>
-            </a>
-          )}
-        </div>
-      </div>
+    <div className="container mx-auto py-8 max-w-3xl space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-2xl">Build Status</CardTitle>
+              <CardDescription>
+                Build ID: {id}
+              </CardDescription>
+            </div>
+            {isSuccess && <CheckCircle2 className="h-8 w-8 text-green-500" />}
+            {isFailed && <XCircle className="h-8 w-8 text-red-500" />}
+            {isInProgress && <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          
+          {/* Status Message */}
+          <div className="text-center">
+            {isSuccess && <h2 className="text-xl font-bold text-green-500">Build Successful!</h2>}
+            {isFailed && <h2 className="text-xl font-bold text-red-500">Build Failed!</h2>}
+            {isInProgress && <h2 className="text-xl font-bold text-blue-500">Building... {buildStatus.duration}</h2>}
+          </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Status Card */}
-        <Card className="bg-slate-900 border-slate-800 lg:col-span-1 h-fit">
-          <CardHeader>
-            <CardTitle>Build Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-slate-500 uppercase">App Name</span>
-              <p className="text-slate-200 font-medium">{build.appName}</p>
+          {/* Progress Bar */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm text-slate-400">
+              <span>Progress</span>
+              <span>{buildStatus.progress}%</span>
             </div>
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-slate-500 uppercase">Package Name</span>
-              <p className="text-slate-200 font-mono text-sm">{build.packageName}</p>
-            </div>
-            <div className="space-y-1">
-              <span className="text-xs font-medium text-slate-500 uppercase">Duration</span>
-              <p className="text-slate-200">{build.duration ? formatDuration(build.duration) : '--'}</p>
-            </div>
-            
-            {build.status === 'building' && (
-              <div className="pt-4 space-y-2">
-                <div className="flex justify-between text-xs text-slate-400">
-                  <span>Progress</span>
-                  <span>{progress}%</span>
-                </div>
-                <Progress value={progress} className="h-2" />
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            <Progress value={buildStatus.progress} className="h-2" />
+          </div>
 
-        {/* Logs Console */}
-        <Card className="bg-slate-950 border-slate-800 lg:col-span-2 flex flex-col h-[600px]">
-          <CardHeader className="flex flex-row items-center justify-between py-3 border-b border-slate-800 bg-slate-900/50">
+          {/* Steps */}
+          <div className="space-y-2 border rounded-md p-4 bg-slate-900/50">
             <div className="flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-slate-400" />
-              <CardTitle className="text-sm font-mono text-slate-300">Build Output</CardTitle>
+              {buildStatus.progress >= 10 ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <div className="h-4 w-4 border rounded-full border-slate-600" />}
+              <span className={buildStatus.progress >= 10 ? 'text-slate-200' : 'text-slate-500'}>Step 1: Build Started</span>
             </div>
-            <Button variant="ghost" size="sm" onClick={copyLogs} className="h-8 text-xs">
-              <Copy className="mr-2 h-3 w-3" /> Copy
-            </Button>
-          </CardHeader>
-          <CardContent className="flex-1 p-0 relative overflow-hidden">
-            <div 
-              ref={scrollRef}
-              className="absolute inset-0 overflow-y-auto p-4 font-mono text-xs space-y-1"
-            >
-              {logs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-600">
-                  <Loader2 className="h-8 w-8 animate-spin mb-2" />
-                  <p>Initializing build environment...</p>
+            <div className="flex items-center gap-2">
+              {buildStatus.progress >= 20 ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <div className="h-4 w-4 border rounded-full border-slate-600" />}
+              <span className={buildStatus.progress >= 20 ? 'text-slate-200' : 'text-slate-500'}>Step 2: Setting up JDK</span>
+            </div>
+             <div className="flex items-center gap-2">
+              {isInProgress && buildStatus.progress > 20 && buildStatus.progress < 80 ? <Clock className="h-4 w-4 animate-spin text-blue-500" /> : 
+               buildStatus.progress >= 80 ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <div className="h-4 w-4 border rounded-full border-slate-600" />}
+              <span className={buildStatus.progress > 20 ? 'text-slate-200' : 'text-slate-500'}>
+                Step 3: Building APK {isInProgress && buildStatus.progress > 20 && buildStatus.progress < 80 && `(Current: ${buildStatus.currentStep})`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {buildStatus.progress >= 90 ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <div className="h-4 w-4 border rounded-full border-slate-600" />}
+              <span className={buildStatus.progress >= 90 ? 'text-slate-200' : 'text-slate-500'}>Step 4: Uploading Artifact</span>
+            </div>
+             <div className="flex items-center gap-2">
+              {isSuccess ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <div className="h-4 w-4 border rounded-full border-slate-600" />}
+              <span className={isSuccess ? 'text-slate-200' : 'text-slate-500'}>Step 5: Complete</span>
+            </div>
+          </div>
+
+          {/* Success Actions */}
+          {isSuccess && buildStatus.downloadUrl && (
+            <div className="pt-4 space-y-4">
+              <div className="flex items-center justify-between p-4 border border-green-500/20 bg-green-500/10 rounded-lg">
+                <div>
+                  <p className="font-medium text-green-500">APK Ready</p>
+                  <p className="text-sm text-slate-400">Size: {(buildStatus.apkSize ? buildStatus.apkSize / 1024 / 1024 : 0).toFixed(2)} MB</p>
+                  <p className="text-sm text-slate-400">Duration: {buildStatus.duration}</p>
                 </div>
-              ) : (
-                logs.map((log, index) => (
-                  <div key={index} className="flex gap-2 group">
-                    <span className="text-slate-600 select-none w-6 text-right shrink-0">{index + 1}</span>
-                    <span className={cn(
-                      "break-all whitespace-pre-wrap",
-                      log.toLowerCase().includes('error') || log.toLowerCase().includes('failed') ? "text-red-400" :
-                      log.toLowerCase().includes('success') ? "text-green-400" :
-                      log.toLowerCase().includes('warning') ? "text-yellow-400" :
-                      "text-slate-300"
-                    )}>
-                      {log}
-                    </span>
-                  </div>
-                ))
-              )}
+                <a href={buildStatus.downloadUrl} download>
+                  <Button className="bg-green-600 hover:bg-green-700">
+                    <Download className="mr-2 h-4 w-4" /> Download APK
+                  </Button>
+                </a>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          )}
+
+          {/* Failure Actions */}
+          {isFailed && (
+            <div className="pt-4 space-y-4">
+              <div className="p-4 border border-red-500/20 bg-red-500/10 rounded-lg">
+                <p className="font-medium text-red-500">Build Failed</p>
+                <p className="text-sm text-slate-300 mt-1">{buildStatus.errorMessage || 'Unknown error occurred'}</p>
+              </div>
+              
+              <div className="border rounded-md bg-slate-950">
+                <Button 
+                  variant="ghost" 
+                  className="w-full flex justify-between p-4 hover:bg-slate-900"
+                  onClick={() => setLogsOpen(!logsOpen)}
+                >
+                  <span>View Full Log</span>
+                  {logsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </Button>
+                
+                {logsOpen && (
+                  <div className="p-4 pt-0 border-t border-slate-800">
+                    <pre className="text-xs text-slate-400 overflow-x-auto p-2 bg-black rounded whitespace-pre-wrap mt-2">
+                      {buildStatus.errorMessage}
+                      {'\n\n(Full logs available in GitHub Actions)'}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
+              <Button onClick={() => window.location.reload()} variant="outline" className="w-full">
+                Try Again
+              </Button>
+            </div>
+          )}
+
+        </CardContent>
+      </Card>
     </div>
   );
 }
