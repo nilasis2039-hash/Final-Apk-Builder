@@ -4,7 +4,9 @@ import { Octokit } from '@octokit/rest';
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const buildMethod = formData.get('buildMethod') as string || 'upload';
+    let buildMethod = formData.get('buildMethod') as string || 'zip';
+    if (buildMethod === 'upload') buildMethod = 'zip';
+
     const appName = formData.get('appName') as string;
     const packageName = formData.get('packageName') as string;
     
@@ -16,7 +18,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (buildMethod === 'upload') {
+    if (buildMethod === 'zip') {
       const file = formData.get('file') as File | null;
       const templateId = formData.get('templateId') as string;
       if (!file && !templateId) {
@@ -62,7 +64,7 @@ export async function POST(req: Request) {
 
     // 3. Trigger GitHub Workflow
     // We'll look for a workflow file. Usually 'android.yml' or 'build.yml'
-    const workflows = await octokit.actions.listRepoWorkflows({ owner, repo });
+    const workflows = await octokit.rest.actions.listRepoWorkflows({ owner, repo });
     const workflow = workflows.data.workflows.find(w => 
       w.name.toLowerCase().includes('android') || 
       w.name.toLowerCase().includes('build') ||
@@ -76,10 +78,26 @@ export async function POST(req: Request) {
       );
     }
 
-    // Trigger the workflow
-    // Note: For 'paste' method, we would ideally use the Git Tree API to commit files first.
-    // For now, we'll trigger the workflow with available inputs.
-    await octokit.actions.createWorkflowDispatch({
+    // Prepare inputs for the workflow
+    const mainActivityCode = formData.get('mainActivityCode') as string || '';
+    const activityMainXml = formData.get('activityMainXml') as string || '';
+    const dependencies = formData.get('dependencies') as string || '';
+    const buildType = formData.get('buildType') as string || 'debug';
+    const minSdk = formData.get('minSdk') as string || '24';
+    const permissionsJson = formData.get('permissions') as string;
+    
+    let permissions = '';
+    try {
+      const perms = JSON.parse(permissionsJson);
+      if (Array.isArray(perms)) {
+        permissions = perms.join(',');
+      }
+    } catch (e) {
+      permissions = permissionsJson || '';
+    }
+
+    // Trigger the workflow with EXACT input names
+    await octokit.rest.actions.createWorkflowDispatch({
       owner,
       repo,
       workflow_id: workflow.id,
@@ -88,7 +106,12 @@ export async function POST(req: Request) {
         appName,
         packageName,
         buildMethod,
-        // Pass other fields if the workflow supports them
+        main_code: Buffer.from(mainActivityCode).toString('base64'),
+        layout_code: Buffer.from(activityMainXml).toString('base64'),
+        dependencies: dependencies || "",
+        buildType: buildType || "debug",
+        minSdk: minSdk || "24",
+        permissions: permissions || ""
       }
     });
 
@@ -96,7 +119,7 @@ export async function POST(req: Request) {
     // Wait a moment for GitHub to create the run
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    const runs = await octokit.actions.listWorkflowRuns({
+    const runs = await octokit.rest.actions.listWorkflowRuns({
       owner,
       repo,
       workflow_id: workflow.id,
