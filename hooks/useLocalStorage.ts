@@ -10,6 +10,7 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
     try {
       const item = window.localStorage.getItem(key);
       if (item) {
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         setStoredValue(JSON.parse(item));
       }
     } catch (error) {

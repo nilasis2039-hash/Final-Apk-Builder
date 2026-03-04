@@ -25,6 +25,7 @@ export default function Dashboard() {
   useEffect(() => {
     const storedBuilds = localStorage.getItem('builds');
     if (storedBuilds) {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       setBuilds(JSON.parse(storedBuilds));
     }
     setLoading(false);

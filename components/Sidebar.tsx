@@ -30,6 +30,7 @@ export function Sidebar() {
 
   // Close sidebar on route change (mobile)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     setIsOpen(false);
   }, [pathname]);
 
